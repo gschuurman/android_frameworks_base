@@ -31,6 +31,7 @@ import android.content.IIntentReceiver;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManagerInternal;
+import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.os.FileUtils;
 import android.os.Handler;
@@ -55,6 +56,7 @@ import android.util.ArrayMap;
 import android.util.Log;
 import android.util.Slog;
 import android.util.TimingsTraceLog;
+import android.view.Display;
 import android.view.SurfaceControl;
 import android.view.WindowManager;
 
@@ -307,6 +309,19 @@ public final class ShutdownThread extends Thread {
         shutdownInner(context, confirm);
     }
 
+    // VIM3: true if the default display panel is actually on. Used to suppress the
+    // shutdown UI / screen wake-lock when shutting down from a display-off state, so
+    // the panel is never flashed on during power-down. Fails safe to the previous
+    // behavior (treat as on) if the state can't be read.
+    private static boolean isDefaultDisplayOn(Context context) {
+        DisplayManager dm = context.getSystemService(DisplayManager.class);
+        if (dm == null) {
+            return true;
+        }
+        Display d = dm.getDisplay(Display.DEFAULT_DISPLAY);
+        return d == null || d.getState() == Display.STATE_ON;
+    }
+
     private static ProgressDialog showShutdownDialog(Context context) {
         // Throw up a system dialog to indicate the device is rebooting / shutting down.
         ProgressDialog pd = new ProgressDialog(context);
@@ -445,7 +460,11 @@ public final class ShutdownThread extends Thread {
             SystemProperties.set(SHUTDOWN_ACTION_PROPERTY, reason);
         }
 
-        sInstance.mProgressDialog = showShutdownDialog(context);
+        // VIM3: only show the "shutting down" UI if the display is actually on.
+        // Rendering the dialog (or the SysUI shutdown UI) powers the panel on, so
+        // shutting down from a display-off state would briefly flash the screen.
+        sInstance.mProgressDialog =
+                isDefaultDisplayOn(context) ? showShutdownDialog(context) : null;
         sInstance.mContext = context;
         sInstance.mPowerManager = (PowerManager)context.getSystemService(Context.POWER_SERVICE);
 
@@ -461,9 +480,12 @@ public final class ShutdownThread extends Thread {
             sInstance.mCpuWakeLock = null;
         }
 
-        // also make sure the screen stays on for better user experience
+        // also make sure the screen stays on for better user experience.
+        // VIM3: gate on the real panel state, not isScreenOn()/isInteractive() —
+        // the display can be off while the system is still interactive, and we must
+        // not turn the panel back on during shutdown.
         sInstance.mScreenWakeLock = null;
-        if (sInstance.mPowerManager.isScreenOn()) {
+        if (isDefaultDisplayOn(context)) {
             try {
                 sInstance.mScreenWakeLock = sInstance.mPowerManager.newWakeLock(
                         PowerManager.FULL_WAKE_LOCK, TAG + "-screen");

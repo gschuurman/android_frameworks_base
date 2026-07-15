@@ -1193,6 +1193,11 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         return handled;
     }
 
+    // VIM3 head unit: physical power button disables touch-wake while injected
+    // keyevent 26 keeps it. Logic lives in Vim3TouchWakePolicy so this file only
+    // carries a few one-line hooks (smaller AOSP/LineageOS merge surface).
+    private final Vim3TouchWakePolicy mVim3TouchWake = new Vim3TouchWakePolicy();
+
     private void interceptPowerKeyDown(KeyEvent event, boolean interactive,
             boolean isKeyGestureTriggered) {
         // Hold a wake lock until the power key is released.
@@ -1547,6 +1552,8 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         }
 
         goToSleep(eventTime, PowerManager.GO_TO_SLEEP_REASON_POWER_BUTTON, flags);
+        // VIM3: disable tap-to-wake if the physical power button caused this sleep.
+        mVim3TouchWake.onSleepFromPowerButton();
         return true;
     }
 
@@ -5023,6 +5030,13 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         final boolean isInjected = (policyFlags & WindowManagerPolicy.FLAG_INJECTED) != 0;
         final boolean longPress = (event.getFlags() & KeyEvent.FLAG_LONG_PRESS) != 0;
 
+        // VIM3: physical power button disables touch-wake (injected keyevent 26 keeps
+        // it); while in physical-button deep-off, ignore injected power (button-only wake).
+        if (keyCode == KeyEvent.KEYCODE_POWER && down
+                && mVim3TouchWake.onPowerKeyDown(isInjected)) {
+            return 0;
+        }
+
         // If screen is off then we treat the case where the keyguard is open but hidden
         // the same as if it were open and in front.
         // This will prevent any keys other than the power button from waking the screen
@@ -6242,6 +6256,9 @@ public class PhoneWindowManager implements WindowManagerPolicy {
         mIsGoingToSleep = false;
         setPendingWakingUpGroup(displayGroupId);
         mDefaultDisplayPolicy.setAwake(true);
+
+        // VIM3: restore the touchscreen / clear deep-off on any genuine wake.
+        mVim3TouchWake.onWokeUp();
 
         // Since goToSleep performs these functions synchronously, we must
         // do the same here.  We cannot post this work to a handler because
