@@ -1175,22 +1175,42 @@ public class DisplayPolicy {
 
         switch (windowType) {
             case TYPE_STATUS_BAR:
-                if (mStatusBar != null && mStatusBar.isAlive()) {
+                if (blocksSingleton(mStatusBar, callingPid, callingUid)) {
                     return true;
                 }
                 break;
             case TYPE_NOTIFICATION_SHADE:
-                if (mNotificationShade != null && mNotificationShade.isAlive()) {
+                if (blocksSingleton(mNotificationShade, callingPid, callingUid)) {
                     return true;
                 }
                 break;
             case TYPE_NAVIGATION_BAR:
-                if (mNavigationBar != null && mNavigationBar.isAlive()) {
+                if (blocksSingleton(mNavigationBar, callingPid, callingUid)) {
                     return true;
                 }
                 break;
         }
         return false;
+    }
+
+    /**
+     * Whether {@code win} still blocks adding another singleton window of its type. A crashed system
+     * UI process is removed by ActivityManager and restarted before its binder death reaches the
+     * window session (late under load), so its windows would otherwise block every new instance
+     * until RescueParty reboots the device. Such windows are removed here as if the death arrived.
+     */
+    private boolean blocksSingleton(WindowState win, int callingPid, int callingUid) {
+        if (win == null || !win.isAlive()) {
+            return false;
+        }
+        final Session session = win.mSession;
+        if (session.mUid == callingUid && session.mPid != callingPid
+                && mService.mAtmService.mProcessMap.getProcess(session.mPid) == null) {
+            Slog.w(TAG, "Removing windows of dead pid " + session.mPid + " blocking " + win);
+            session.binderDied();
+            return false;
+        }
+        return true;
     }
 
     private boolean isSingletonPerDisplay(@LayoutParams.WindowType int windowType) {

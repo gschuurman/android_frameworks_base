@@ -932,7 +932,7 @@ public class Transitions implements RemoteCallable<Transitions>,
                     ready.mStartT.apply();
                 }
                 // finish now since there's nothing to animate. Calls back into processReadyQueue
-                onFinish(ready.mToken, null);
+                onFinish(ready, null);
                 return;
             }
             playTransitionWithTracing(ready);
@@ -1170,6 +1170,12 @@ public class Transitions implements RemoteCallable<Transitions>,
             Log.e(TAG, "Trying to finish a non-existent transition: " + token);
             return;
         }
+        onFinish(active, wct);
+    }
+
+    private void onFinish(@NonNull ActiveTransition active,
+            @Nullable WindowContainerTransaction wct) {
+        final IBinder token = active.mToken;
         if (DEBUG_FINISH_TRANSITION) {
             final String name = active.mHandler != null
                     ?  active.mHandler.getClass().getName() : "null";
@@ -1177,7 +1183,10 @@ public class Transitions implements RemoteCallable<Transitions>,
                             + " wct=" + wct + " handler=" + name, new Throwable());
         }
 
-        final Track track = mTracks.get(active.getTrack());
+        // A transition without info has track -1; look it up safely so a bookkeeping mismatch is
+        // logged instead of crashing SystemUI.
+        final int trackId = active.getTrack();
+        final Track track = trackId >= 0 && trackId < mTracks.size() ? mTracks.get(trackId) : null;
         if (track == null || track.mActiveTransition != active) {
             Log.e(TAG, "Trying to finish a non-running transition. Either remote crashed or "
                     + " a handler didn't properly deal with a merge. " + active,
@@ -1235,7 +1244,7 @@ public class Transitions implements RemoteCallable<Transitions>,
             }
             active.mMerged.clear();
         }
-        mKnownTransitions.remove(token);
+        mKnownTransitions.remove(token, active);
 
         // Now that this is done, check the ready queue for more work.
         processReadyQueue(track);
